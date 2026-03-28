@@ -1,5 +1,5 @@
-import HormuzGame from "./components/HormuzGame";
+import HormuzMultiplayer from "./components/HormuzMultiplayer";
 
 export default function Home() {
-  return <HormuzGame />;
+  return <HormuzMultiplayer />;
 }
