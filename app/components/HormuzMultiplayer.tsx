@@ -382,6 +382,25 @@ export default function HormuzMultiplayer() {
         if (next.has(idx)) {
           next.delete(idx);
         } else {
+          // Check 8-way orthogonal and diagonal constraints
+          const r = Math.floor(idx / COLS);
+          const c = idx % COLS;
+          const adjacent: number[] = [];
+          for (const dr of [-1, 0, 1]) {
+            for (const dc of [-1, 0, 1]) {
+              if (dr === 0 && dc === 0) continue;
+              const nr = r + dr, nc = c + dc;
+              if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
+                adjacent.push(nr * COLS + nc);
+              }
+            }
+          }
+          
+          if (adjacent.some(a => next.has(a))) {
+            showFlash("Mines cannot be placed directly adjacent to each other!");
+            return prev;
+          }
+
           if (next.size < maxMines) next.add(idx);
           else showFlash(`Max ${maxMines} mines allowed`);
         }
