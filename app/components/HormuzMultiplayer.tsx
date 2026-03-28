@@ -220,6 +220,37 @@ export default function HormuzMultiplayer() {
     }
   };
 
+  const handlePlayBot = async () => {
+    if (!playerName.trim()) { setError("Enter your name"); return; }
+    setError(null);
+    try {
+      const res = await fetch(`${API_URL}/rooms/bot`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, playerName: playerName.trim(), waterMask: waterMaskRef.current }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      
+      setRoomCode(data.roomCode);
+      setIsCreator(false);
+      setCreatorName(data.creatorName);
+      setFlipperName(playerName.trim());
+      setMaxMines(data.totalMines);
+      setAntidotes(data.antidotes);
+      setScore(data.score);
+      setMinesHit(data.minesHit);
+      setSafeCells(data.safeCells || 0);
+
+      rebuildCells(data.waterMask, []);
+      setPhase("flipping");
+      getSocket().emit("start_flipping");
+      getSocket().emit("flipper_joined", { roomCode: data.roomCode, flipperName: playerName.trim() });
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
   const handleResumeOrJoin = async () => {
     if (!playerName.trim()) { setError("Enter your name"); return; }
     if (!joinCode.trim()) { setError("Enter room code"); return; }
@@ -560,6 +591,11 @@ export default function HormuzMultiplayer() {
           <button onClick={handleCreate} disabled={!imgLoaded}
             className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-cyan-600 font-bold mb-3 hover:scale-[1.02] transition-transform">
             🏠 Create Room (Layer)
+          </button>
+
+          <button onClick={handlePlayBot} disabled={!imgLoaded}
+            className="w-full py-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 font-bold mb-3 shadow-[0_0_15px_rgba(168,85,247,0.3)] hover:scale-[1.02] transition-transform">
+            🤖 Play vs AI Layer
           </button>
 
           <div className="flex items-center gap-3 my-4">
