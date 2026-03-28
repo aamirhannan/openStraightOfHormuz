@@ -713,7 +713,7 @@ export default function HormuzMultiplayer() {
         <div className="w-full mb-3 px-1" style={{ maxWidth: size.w || 900 }}>
           <div className="flex justify-between items-center text-[11px] text-zinc-400">
             <span className="bg-zinc-800/80 border border-zinc-700 px-3 py-1 rounded-full uppercase tracking-widest font-bold text-[9px]">
-               Mission: Link West to East
+               Mission: Link West cells to most East cell
             </span>
             <span>Safe Areas Cleared: <span className="text-white font-bold">{safeRevealed}</span></span>
           </div>
