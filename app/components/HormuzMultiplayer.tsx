@@ -653,15 +653,14 @@ export default function HormuzMultiplayer() {
         </div>
       )}
 
-      {/* Progress */}
+      {/* Progress / Stats */}
       {(phase === "flipping" || phase === "spectating" || phase === "gameover") && (
-        <div className="w-full mb-3" style={{ maxWidth: size.w || 900 }}>
-          <div className="flex justify-between text-[10px] text-zinc-500 mb-1">
-            <span>Safe Cells Revealed</span>
-            <span>{safeRevealed}/{safeCells} ({progress}%)</span>
-          </div>
-          <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-            <div className="h-full bg-gradient-to-r from-cyan-500 to-amber-500 rounded-full transition-all duration-500" style={{ width: `${progress}%` }} />
+        <div className="w-full mb-3 px-1" style={{ maxWidth: size.w || 900 }}>
+          <div className="flex justify-between items-center text-[11px] text-zinc-400">
+            <span className="bg-zinc-800/80 border border-zinc-700 px-3 py-1 rounded-full uppercase tracking-widest font-bold text-[9px]">
+               Mission: Link West to East
+            </span>
+            <span>Safe Areas Cleared: <span className="text-white font-bold">{safeRevealed}</span></span>
           </div>
         </div>
       )}
