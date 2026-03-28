@@ -1,5 +1,5 @@
-import GridGame from "./components/GridGame";
+import HormuzGame from "./components/HormuzGame";
 
 export default function Home() {
-  return <GridGame />;
+  return <HormuzGame />;
 }
