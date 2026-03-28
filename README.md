@@ -1,36 +1,42 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Strait of Hormuz - Frontend
 
-## Getting Started
+This is the interactive client application for the asymmetric "Mine Layer vs Flipper" strategy game, built using Next.js.
 
-First, run the development server:
+## 🚀 Game Overview
+Two roles clash across a real geographic map of the Strait of Hormuz:
+* **The Mine Layer (Creator):** Plots hidden explosive mines inside the narrow waterways, constrained by an 8-way spacing rule to prevent unplayable "walls."
+* **The Flipper:** Plays a high-states "Minesweeper-like" puzzle routing a ship from the Western entry (Persian Gulf) safely out to the Eastern or Southern exits (Gulf of Oman). 
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+### Features
+* **Interactive Canvas Engine:** The grid dynamically scales over a high-resolution satellite image. Water tiles are calculated instantly using color-sampling algorithms mapping 20x20 transparent tiles to exact geographic waterways.
+* **Persistent Sessions (No Auth Required):** User identity is maintained invisibly via randomized `localStorage` UUIDs matching the backend REST state, meaning you can reload the page or close your browser without losing your game.
+* **Single Player Mode:** An "AI Commander" algorithm that actively parses random un-adjacent coordinate matrices automatically if you prefer to play a puzzle solo.
+* **Instant URL Deep Linking:** Sharing `?room=HZ-XXXX` links automatically completes the join sequence.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 🛠 Tech Stack
+* **Framework:** Next.js (React / App Router)
+* **Styling:** Tailwind CSS (Custom UI panels, fluid gradients)
+* **Real-time Engine:** `socket.io-client` 
+* **State Networking:** Synchronous REST API fetching for atomic movements.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## ⚙️ Local Setup Instructions
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. **Install Dependencies:**
+   Ensure you are in the `frontend` directory.
+   ```bash
+   npm install
+   ```
 
-## Learn More
+2. **Environment Variables:**
+   Create a `.env` file in the `frontend` directory:
+   ```env
+   NEXT_PUBLIC_SERVER_URL=http://localhost:4000
+   ```
 
-To learn more about Next.js, take a look at the following resources:
+3. **Run the Development Server:**
+   ```bash
+   npm run dev
+   ```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+4. **Access the Application:**
+   Open your browser and navigate to `http://localhost:3000`. If you port-forward (e.g. using ngrok), the multiplayer will instantly work for remote players.

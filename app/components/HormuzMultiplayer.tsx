@@ -97,6 +97,17 @@ export default function HormuzMultiplayer() {
   /* ── init ── */
   useEffect(() => {
     setUserId(getUserId());
+    
+    // Auto-fill from URL
+    if (typeof window !== "undefined") {
+      const searchParams = new URLSearchParams(window.location.search);
+      const roomFromUrl = searchParams.get("room");
+      if (roomFromUrl) {
+        setJoinCode(roomFromUrl.toUpperCase());
+        setPlayerName("Player 2");
+      }
+    }
+
     const img = new window.Image();
     img.crossOrigin = "anonymous";
     img.src = "/straight.png";
