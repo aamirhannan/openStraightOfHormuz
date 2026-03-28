@@ -2,26 +2,30 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getSocket } from "../lib/socket";
+import { getUserId } from "../lib/userId";
 
 /* ── constants ── */
+const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || "http://localhost:4000";
+const API_URL = `${SERVER_URL}/api`;
+
 const COLS = 20;
 const ROWS = 20;
 const TOTAL = COLS * ROWS;
 
 /* ── types ── */
-type Phase = "lobby" | "waiting" | "playing" | "gameover";
+type Phase = "lobby" | "placing" | "waiting_flipper" | "flipping" | "spectating" | "gameover";
+
 interface CellLocal {
-  kind: "land" | "water" | "unknown";
+  kind: "land" | "water";
   revealed: boolean;
-  value: number;
-  claimedBy: 1 | 2 | null;
+  value: number; // 0-9 for points, -1 for mine
+  isMine?: boolean;
 }
 
 function isWater(r: number, g: number, b: number) {
   return b > 120 && b > r + 35 && b > g;
 }
 
-/* ── water mask builder (runs once from image) ── */
 function buildWaterMask(img: HTMLImageElement): boolean[] {
   const tmp = document.createElement("canvas");
   tmp.width = img.naturalWidth;
@@ -55,31 +59,44 @@ export default function HormuzMultiplayer() {
   /* ── refs ── */
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
-  const waterMaskRef = useRef<boolean[]>([]); // flat 400-length array
+  const waterMaskRef = useRef<boolean[]>([]);
 
   /* ── state ── */
+  const [userId, setUserId] = useState<string>("");
   const [phase, setPhase] = useState<Phase>("lobby");
   const [playerName, setPlayerName] = useState("");
   const [roomCode, setRoomCode] = useState("");
   const [joinCode, setJoinCode] = useState("");
-  const [mySlot, setMySlot] = useState<1 | 2 | null>(null);
-  const [players, setPlayers] = useState<{ name: string; slot: number; score: number }[]>([]);
-  const [currentTurn, setCurrentTurn] = useState<1 | 2>(1);
-  const [scores, setScores] = useState<{ 1: number; 2: number }>({ 1: 0, 2: 0 });
+  const [isCreator, setIsCreator] = useState(false);
+  
+  // Game stats
+  const [maxMines, setMaxMines] = useState(0);
+  const [placedMines, setPlacedMines] = useState<Set<number>>(new Set());
+  const [antidotes, setAntidotes] = useState(5);
+  const [score, setScore] = useState(0);
+  const [minesHit, setMinesHit] = useState(0);
+  const [safeCells, setSafeCells] = useState(0);
+  const [safeRevealed, setSafeRevealed] = useState(0);
+  const [outcome, setOutcome] = useState<"won" | "lost" | null>(null);
+
+  // Names
+  const [creatorName, setCreatorName] = useState("");
+  const [flipperName, setFlipperName] = useState("");
+
   const [cells, setCells] = useState<CellLocal[]>([]);
-  const [winner, setWinner] = useState<number | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [imgLoaded, setImgLoaded] = useState(false);
   const [hover, setHover] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
-  const [liveStats, setLiveStats] = useState<{ onlinePlayers: number; activeGames: number }>({ onlinePlayers: 0, activeGames: 0 });
+  const [liveStats, setLiveStats] = useState<{ onlinePlayers: number; activeFlippers: number }>({ onlinePlayers: 0, activeFlippers: 0 });
 
   const showFlash = (msg: string) => { setFlash(msg); setTimeout(() => setFlash(null), 2500); };
 
-  /* ── load image once ── */
+  /* ── init ── */
   useEffect(() => {
+    setUserId(getUserId());
     const img = new window.Image();
     img.crossOrigin = "anonymous";
     img.src = "/straight.png";
@@ -89,112 +106,201 @@ export default function HormuzMultiplayer() {
       const scale = maxW / img.naturalWidth;
       setSize({ w: Math.round(img.naturalWidth * scale), h: Math.round(img.naturalHeight * scale) });
       waterMaskRef.current = buildWaterMask(img);
-      // Build initial blank cells from water mask
-      setCells(waterMaskRef.current.map((w) => ({ kind: w ? "water" : "land", revealed: false, value: 0, claimedBy: null })));
+      setCells(waterMaskRef.current.map((w) => ({ kind: w ? "water" : "land", revealed: false, value: 0 })));
       setImgLoaded(true);
     };
   }, []);
 
-  /* ── socket listeners ── */
+  /* ── socket ── */
   useEffect(() => {
     const socket = getSocket();
     if (!socket.connected) socket.connect();
 
-    socket.on("game_start", (data) => {
-      setPlayers(data.players);
-      setCurrentTurn(data.currentTurn);
-      setScores({ 1: 0, 2: 0 });
-      setPhase("playing");
-      // Reset cells to unrevealed
-      setCells(waterMaskRef.current.map((w) => ({ kind: w ? "water" : "land", revealed: false, value: 0, claimedBy: null })));
+    socket.on("live_stats", (data) => setLiveStats(data));
+
+    socket.on("mines_confirmed", (data) => {
+      if (data.roomCode === roomCode && !isCreator) {
+        // Just in case watcher gets it
+      } else if (data.roomCode === roomCode && isCreator && phase === "placing") {
+        setPhase("waiting_flipper");
+      }
     });
 
-    socket.on("cell_revealed", (data) => {
-      setCells((prev) => prev.map((c, i) =>
-        i === data.cellIndex
-          ? { ...c, revealed: true, value: data.value, claimedBy: data.claimedBy }
-          : c
-      ));
-      setScores(data.scores);
-      setCurrentTurn(data.currentTurn);
+    socket.on("flip_update", (data) => {
+      if (data.roomCode === roomCode || true) { // Room scoped, but just to be sure
+        setCells((prev) => {
+          const newCells = [...prev];
+          newCells[data.cellIndex] = { ...newCells[data.cellIndex], revealed: true, value: data.value, isMine: data.isMine };
+          return newCells;
+        });
+        setAntidotes(data.antidotes);
+        setScore(data.score);
+        setMinesHit(data.minesHit);
+        setSafeRevealed(data.safeRevealed);
+        if (data.outcome) {
+          setPhase("gameover");
+          setOutcome(data.outcome);
+        }
+      }
     });
 
-    socket.on("danger_hit", (data) => {
-      setCells((prev) => prev.map((c, i) =>
-        i === data.cellIndex
-          ? { ...c, revealed: true, kind: "unknown", value: -1, claimedBy: data.hitBy }
-          : c
-      ));
-      showFlash(`💥 ${data.playerName} hit a DANGER cell! Resetting...`);
-    });
-
-    socket.on("game_reset", (data) => {
-      setPlayers(data.players);
-      setCurrentTurn(data.currentTurn);
-      setScores({ 1: 0, 2: 0 });
-      setCells(waterMaskRef.current.map((w) => ({ kind: w ? "water" : "land", revealed: false, value: 0, claimedBy: null })));
-    });
-
-    socket.on("game_over", (data) => {
-      setWinner(data.winner);
-      setScores(data.scores);
-      setPlayers(data.players);
+    socket.on("game_result", (data) => {
       setPhase("gameover");
-    });
-
-    socket.on("player_disconnected", (data) => {
-      showFlash(`${data.playerName} disconnected. You win!`);
-      if (data.scores) setScores(data.scores);
-      if (data.players) setPlayers(data.players);
-      setWinner(data.winner ?? mySlot);
-      setPhase("gameover");
-    });
-
-    socket.on("live_stats", (data) => {
-      setLiveStats(data);
+      setOutcome(data.outcome);
     });
 
     return () => {
-      socket.off("game_start");
-      socket.off("cell_revealed");
-      socket.off("danger_hit");
-      socket.off("game_reset");
-      socket.off("game_over");
-      socket.off("player_disconnected");
       socket.off("live_stats");
+      socket.off("mines_confirmed");
+      socket.off("flip_update");
+      socket.off("game_result");
     };
-  }, [mySlot]);
+  }, [roomCode, isCreator, phase]);
+
+  useEffect(() => {
+    if (roomCode) {
+      getSocket().emit("watch_room", { roomCode });
+    }
+  }, [roomCode]);
+
+  /* ── helper to rebuild cells array ── */
+  const rebuildCells = (mask: boolean[], revealedVals: any[], myMines?: number[]) => {
+    const newCells: CellLocal[] = mask.map((w) => ({ kind: w ? "water" : "land", revealed: false, value: 0 }));
+    if (myMines) {
+      myMines.forEach(idx => {
+        newCells[idx].isMine = true;
+      });
+    }
+    revealedVals?.forEach((rv: any) => {
+      newCells[rv.idx].revealed = true;
+      newCells[rv.idx].value = rv.value;
+      newCells[rv.idx].isMine = rv.isMine;
+    });
+    setCells(newCells);
+  };
 
   /* ── actions ── */
-  const handleCreate = useCallback(() => {
+  const handleCreate = async () => {
     if (!playerName.trim()) { setError("Enter your name"); return; }
     setError(null);
-    const socket = getSocket();
-    socket.emit("create_room", { playerName: playerName.trim(), waterMask: waterMaskRef.current }, (res: any) => {
-      if (res.ok) {
-        setRoomCode(res.roomCode);
-        setMySlot(res.slot);
-        setPhase("waiting");
-      } else {
-        setError(res.error);
-      }
-    });
-  }, [playerName]);
+    try {
+      const res = await fetch(`${API_URL}/rooms`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, playerName: playerName.trim(), waterMask: waterMaskRef.current }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      
+      setRoomCode(data.roomCode);
+      setMaxMines(data.maxMines);
+      setIsCreator(true);
+      setCreatorName(playerName.trim());
+      setPlacedMines(new Set());
+      rebuildCells(waterMaskRef.current, []);
+      setPhase("placing");
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
 
-  const handleJoin = useCallback(() => {
+  const handleResumeOrJoin = async () => {
     if (!playerName.trim()) { setError("Enter your name"); return; }
     if (!joinCode.trim()) { setError("Enter room code"); return; }
     setError(null);
-    const socket = getSocket();
-    socket.emit("join_room", { roomCode: joinCode.trim().toUpperCase(), playerName: playerName.trim(), waterMask: waterMaskRef.current }, (res: any) => {
+    const code = joinCode.trim().toUpperCase();
+
+    try {
+      // 1. Try to get state
+      let res = await fetch(`${API_URL}/rooms/${code}?userId=${userId}`);
+      let data = await res.json();
+      
       if (res.ok) {
-        setRoomCode(res.roomCode);
-        setMySlot(res.slot);
-      } else {
-        setError(res.error);
+        if (data.isCreator) {
+          // Resume creator
+          setRoomCode(data.roomCode);
+          setIsCreator(true);
+          setCreatorName(data.creatorName);
+          setFlipperName(data.flipperName);
+          setMaxMines(data.maxMines);
+          setAntidotes(data.antidotes);
+          setScore(data.score);
+          setMinesHit(data.minesHit);
+          setSafeCells(data.safeCells || 0);
+          
+          rebuildCells(data.waterMask, data.revealedValues || [], data.minePositions);
+          if (data.status === "placing_mines") setPhase("placing");
+          else if (data.status === "ready") setPhase("waiting_flipper");
+          else if (data.status === "flipping") setPhase("spectating");
+          else {
+            setPhase("gameover");
+            setOutcome(data.status); // won or lost
+          }
+          return;
+        } else if (data.isFlipper) {
+          // Resume flipper
+          setRoomCode(data.roomCode);
+          setIsCreator(false);
+          setCreatorName(data.creatorName);
+          setFlipperName(data.flipperName);
+          setAntidotes(data.antidotes);
+          setScore(data.score);
+          setMinesHit(data.minesHit);
+          setSafeCells(data.safeCells || 0);
+          
+          rebuildCells(data.waterMask, data.revealedValues || []);
+          if (data.status === "flipping") {
+             setPhase("flipping");
+             getSocket().emit("start_flipping");
+          } else {
+             setPhase("gameover");
+             setOutcome(data.status);
+          }
+          return;
+        }
       }
-    });
-  }, [playerName, joinCode]);
+
+      // 2. Not a returning player, try to join as flipper
+      const joinRes = await fetch(`${API_URL}/rooms/${code}/join`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, playerName: playerName.trim() }),
+      });
+      const joinData = await joinRes.json();
+      if (!joinRes.ok) throw new Error(joinData.error || "Failed to join");
+      
+      setRoomCode(joinData.roomCode);
+      setIsCreator(false);
+      setCreatorName(joinData.creatorName);
+      setFlipperName(playerName.trim());
+      setAntidotes(joinData.antidotes);
+      setScore(joinData.score);
+      setMinesHit(joinData.minesHit);
+      setSafeCells(joinData.safeCells || 0);
+
+      rebuildCells(joinData.waterMask, joinData.revealedValues || []);
+      setPhase("flipping");
+      getSocket().emit("start_flipping");
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
+  const submitMines = async () => {
+    try {
+      const res = await fetch(`${API_URL}/rooms/${roomCode}/mines`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, minePositions: Array.from(placedMines) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      getSocket().emit("mines_placed", { roomCode });
+      setPhase("waiting_flipper");
+    } catch (e: any) {
+      showFlash(e.message);
+    }
+  };
 
   const handleCopy = useCallback(() => {
     const link = `${window.location.origin}?room=${roomCode}`;
@@ -216,29 +322,78 @@ export default function HormuzMultiplayer() {
     return row * COLS + col;
   }, [size]);
 
-  const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (phase !== "playing" || currentTurn !== mySlot) return;
+  const handleCanvasClick = async (e: React.MouseEvent<HTMLCanvasElement>) => {
     const idx = cellFromEvent(e);
     if (idx === null) return;
     const cell = cells[idx];
-    if (!cell || cell.kind === "land" || cell.revealed) return;
 
-    const socket = getSocket();
-    socket.emit("cell_click", { roomCode, cellIndex: idx }, (res: any) => {
-      if (!res.ok) console.warn("click rejected:", res.error);
-    });
-  }, [phase, currentTurn, mySlot, cells, roomCode, cellFromEvent]);
+    if (phase === "placing") {
+      if (cell.kind === "land") return;
+      setPlacedMines(prev => {
+        const next = new Set(prev);
+        if (next.has(idx)) {
+          next.delete(idx);
+        } else {
+          if (next.size < maxMines) next.add(idx);
+          else showFlash(`Max ${maxMines} mines allowed`);
+        }
+        return next;
+      });
+      return;
+    }
+
+    if (phase === "flipping") {
+      if (!cell || cell.kind === "land" || cell.revealed) return;
+      try {
+        const res = await fetch(`${API_URL}/rooms/${roomCode}/flip`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, cellIndex: idx }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+
+        // Update locally
+        setCells((prev) => {
+          const newCells = [...prev];
+          newCells[idx] = { ...newCells[idx], revealed: true, value: data.value, isMine: data.isMine };
+          return newCells;
+        });
+        setAntidotes(data.antidotes);
+        setScore(data.score);
+        setMinesHit(data.minesHit);
+        setSafeRevealed(data.safeRevealed);
+        
+        getSocket().emit("cell_flipped", { roomCode, cellIndex: idx, result: data });
+
+        if (data.isMine) {
+          showFlash(`💥 You hit a mine! ${data.antidotes} antidotes left.`);
+        }
+
+        if (data.outcome) {
+          setPhase("gameover");
+          setOutcome(data.outcome);
+          getSocket().emit("game_ended", { roomCode, outcome: data.outcome });
+        }
+      } catch (e: any) {
+        console.warn(e.message);
+      }
+    }
+  };
 
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (phase !== "playing") return;
     const idx = cellFromEvent(e);
     const canvas = canvasRef.current;
     if (idx === null) { setHover(null); if (canvas) canvas.style.cursor = "default"; return; }
     const cell = cells[idx];
-    const clickable = cell && cell.kind !== "land" && !cell.revealed && currentTurn === mySlot;
+    
+    let clickable = false;
+    if (phase === "placing" && cell.kind === "water") clickable = true;
+    else if (phase === "flipping" && cell && cell.kind === "water" && !cell.revealed) clickable = true;
+
     if (canvas) canvas.style.cursor = clickable ? "pointer" : "default";
     setHover(clickable ? idx : null);
-  }, [phase, cells, currentTurn, mySlot, cellFromEvent]);
+  }, [phase, cells, cellFromEvent]);
 
   /* ── draw canvas ── */
   useEffect(() => {
@@ -269,67 +424,94 @@ export default function HormuzMultiplayer() {
         continue;
       }
 
-      if (cell.revealed) {
-        if (cell.value === -1) {
-          // danger
+      // Drawing logic for Placing phase
+      if (phase === "placing" || phase === "waiting_flipper") {
+        const hasMine = placedMines.has(i) || cell.isMine;
+        if (hasMine) {
+          ctx.fillStyle = "rgba(220,38,38,0.85)";
+          ctx.fillRect(x, y, cw, ch);
+          ctx.fillStyle = "#fff";
+          ctx.font = `bold ${Math.floor(Math.min(cw, ch) * 0.55)}px sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("💣", x + cw / 2, y + ch / 2);
+        } else if (hovered && phase === "placing") {
+          ctx.fillStyle = "rgba(255,255,255,0.28)";
+          ctx.fillRect(x, y, cw, ch);
+        }
+        ctx.strokeStyle = "rgba(100,200,255,0.2)";
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(x, y, cw, ch);
+        continue;
+      }
+
+      // Drawing logic for Flipping / Spectating / Gameover
+      if (cell.revealed || (phase === "gameover" && cell.isMine)) {
+        if (cell.isMine) {
           ctx.fillStyle = "rgba(220,38,38,0.88)";
           ctx.fillRect(x, y, cw, ch);
           ctx.strokeStyle = "rgba(255,80,80,1)";
           ctx.lineWidth = 1.5;
           ctx.strokeRect(x, y, cw, ch);
           ctx.fillStyle = "#fff";
-          ctx.font = `bold ${Math.floor(Math.min(cw, ch) * 0.55)}px sans-serif`;
+          ctx.font = `bold ${Math.floor(Math.min(cw, ch) * 0.5)}px sans-serif`;
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
-          ctx.fillText("⚠", x + cw / 2, y + ch / 2);
+          ctx.fillText("💥", x + cw / 2, y + ch / 2);
         } else {
-          ctx.fillStyle = cell.claimedBy === 1 ? "rgba(6,182,212,0.75)" : "rgba(217,70,239,0.75)";
+          ctx.fillStyle = "rgba(6,182,212,0.75)";
           ctx.fillRect(x, y, cw, ch);
-          ctx.strokeStyle = cell.claimedBy === 1 ? "rgba(6,182,212,1)" : "rgba(217,70,239,1)";
+          ctx.strokeStyle = "rgba(6,182,212,1)";
           ctx.lineWidth = 1.2;
           ctx.strokeRect(x, y, cw, ch);
           ctx.fillStyle = "#fff";
-          ctx.font = `bold ${Math.floor(Math.min(cw, ch) * 0.55)}px sans-serif`;
+          ctx.font = `bold ${Math.floor(Math.min(cw, ch) * 0.6)}px sans-serif`;
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
           ctx.fillText(String(cell.value), x + cw / 2, y + ch / 2);
         }
-      } else if (phase === "playing") {
-        ctx.fillStyle = hovered ? "rgba(255,255,255,0.28)" : "rgba(30,100,200,0.13)";
+      } else if (phase === "flipping" || phase === "spectating") {
+        if (isCreator && cell.isMine) {
+          // Creator sees their unrevealed mines faintly
+          ctx.fillStyle = "rgba(220,38,38,0.3)";
+          ctx.fillRect(x, y, cw, ch);
+          ctx.fillStyle = "rgba(255,255,255,0.4)";
+          ctx.font = `${Math.floor(Math.min(cw, ch) * 0.4)}px sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("💣", x + cw / 2, y + ch / 2);
+        }
+
+        ctx.fillStyle = hovered && phase === "flipping" ? "rgba(255,255,255,0.28)" : "rgba(30,100,200,0.13)";
         ctx.fillRect(x, y, cw, ch);
-        ctx.strokeStyle = hovered ? "rgba(200,240,255,0.75)" : "rgba(100,200,255,0.32)";
-        ctx.lineWidth = hovered ? 1.2 : 0.7;
+        ctx.strokeStyle = hovered && phase === "flipping" ? "rgba(200,240,255,0.75)" : "rgba(100,200,255,0.32)";
+        ctx.lineWidth = hovered && phase === "flipping" ? 1.2 : 0.7;
         ctx.strokeRect(x, y, cw, ch);
       }
     }
-  }, [cells, size, phase, hover]);
-
-  /* ── stats ── */
-  const safeTotal = cells.filter((c) => c.kind === "water").length;
-  const revealedSafe = cells.filter((c) => c.kind !== "land" && c.revealed && c.value !== -1).length;
-  const progress = safeTotal > 0 ? Math.round((revealedSafe / safeTotal) * 100) : 0;
-  const isMyTurn = currentTurn === mySlot;
+  }, [cells, size, phase, hover, placedMines, isCreator]);
 
   /* ── RENDER ── */
+  const progress = safeCells > 0 ? Math.round((safeRevealed / safeCells) * 100) : 0;
+
   return (
     <div className="min-h-screen bg-[#060a12] text-white flex flex-col items-center py-6 px-4 select-none" style={{ fontFamily: "'Inter', sans-serif" }}>
       {/* Flash */}
       <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 transition-all duration-400 ${flash ? "opacity-100 scale-100" : "opacity-0 scale-90 pointer-events-none"}`}>
-        <div className="bg-red-950 border border-red-500 text-red-200 px-6 py-3 rounded-2xl shadow-2xl font-bold backdrop-blur-md text-sm">{flash}</div>
+        <div className="bg-amber-950 border border-amber-500 text-amber-200 px-6 py-3 rounded-2xl shadow-2xl font-bold backdrop-blur-md text-sm">{flash}</div>
       </div>
 
       {/* Title */}
       <div className="mb-4 text-center">
-        <h1 className="text-3xl font-black tracking-widest uppercase bg-gradient-to-r from-cyan-400 via-white to-fuchsia-400 bg-clip-text text-transparent">
+        <h1 className="text-3xl font-black tracking-widest uppercase bg-gradient-to-r from-cyan-400 via-white to-amber-400 bg-clip-text text-transparent">
           Strait of Hormuz
         </h1>
-        <p className="text-zinc-500 text-xs mt-1 tracking-widest">MULTIPLAYER · OPEN THE STRAIT · AVOID DANGER</p>
+        <p className="text-zinc-500 text-xs mt-1 tracking-widest">MINE LAYER VS FLIPPER</p>
       </div>
 
       {/* ═══════ LOBBY ═══════ */}
       {phase === "lobby" && (
         <div className="bg-zinc-900/90 border border-zinc-700 rounded-3xl p-8 max-w-md w-full shadow-2xl mt-4">
-          {/* Live Stats Bar */}
           <div className="flex justify-center gap-6 mb-6">
             <div className="flex items-center gap-2 bg-green-900/30 border border-green-700/50 rounded-full px-4 py-1.5">
               <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse inline-block" />
@@ -338,31 +520,31 @@ export default function HormuzMultiplayer() {
             </div>
             <div className="flex items-center gap-2 bg-amber-900/30 border border-amber-700/50 rounded-full px-4 py-1.5">
               <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse inline-block" />
-              <span className="text-amber-400 text-xs font-bold">{liveStats.activeGames}</span>
-              <span className="text-zinc-400 text-xs">Active Games</span>
+              <span className="text-amber-400 text-xs font-bold">{liveStats.activeFlippers}</span>
+              <span className="text-zinc-400 text-xs">Flipping Now</span>
             </div>
           </div>
 
-          <div className="text-5xl mb-4 text-center">🌊</div>
-          <h2 className="text-xl font-bold text-center mb-6">Join or Create a Game</h2>
+          <div className="text-5xl mb-4 text-center">💣 / 🔍</div>
+          <h2 className="text-xl font-bold text-center mb-6">Layer or Flipper?</h2>
 
           <label className="text-xs text-zinc-400 uppercase tracking-wider font-bold mb-1 block">Your Name</label>
           <input
             value={playerName}
             onChange={(e) => setPlayerName(e.target.value)}
-            placeholder="Captain..."
+            placeholder="Name..."
             maxLength={20}
-            className="w-full rounded-xl bg-zinc-800 border border-zinc-600 px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-cyan-500 mb-5"
+            className="w-full rounded-xl bg-zinc-800 border border-zinc-600 px-4 py-3 text-white placeholder:text-zinc-500 mb-5"
           />
 
           <button onClick={handleCreate} disabled={!imgLoaded}
-            className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-cyan-600 text-white font-bold shadow-lg hover:scale-[1.02] active:scale-95 transition-transform cursor-pointer disabled:opacity-40 mb-3">
-            🏠 Create Room
+            className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-cyan-600 font-bold mb-3 hover:scale-[1.02] transition-transform">
+            🏠 Create Room (Layer)
           </button>
 
           <div className="flex items-center gap-3 my-4">
             <div className="flex-1 h-px bg-zinc-700" />
-            <span className="text-xs text-zinc-500 uppercase tracking-wider">or</span>
+            <span className="text-xs text-zinc-500 uppercase tracking-wider">or resume/join</span>
             <div className="flex-1 h-px bg-zinc-700" />
           </div>
 
@@ -372,141 +554,142 @@ export default function HormuzMultiplayer() {
             onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
             placeholder="HZ-XXXX"
             maxLength={7}
-            className="w-full rounded-xl bg-zinc-800 border border-zinc-600 px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 mb-3 tracking-widest text-center font-mono text-lg"
+            className="w-full rounded-xl bg-zinc-800 border border-zinc-600 px-4 py-3 text-white placeholder:text-zinc-500 mb-3 text-center tracking-widest font-mono"
           />
-          <button onClick={handleJoin} disabled={!imgLoaded}
-            className="w-full py-3 rounded-xl bg-gradient-to-r from-fuchsia-500 to-fuchsia-600 text-white font-bold shadow-lg hover:scale-[1.02] active:scale-95 transition-transform cursor-pointer disabled:opacity-40">
-            🎮 Join Room
+          <button onClick={handleResumeOrJoin} disabled={!imgLoaded}
+            className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 font-bold hover:scale-[1.02] transition-transform">
+            🎮 Join/Resume Game
           </button>
 
           {error && <p className="text-red-400 text-sm mt-4 text-center">{error}</p>}
         </div>
       )}
 
-      {/* ═══════ WAITING FOR PLAYER 2 ═══════ */}
-      {phase === "waiting" && (
-        <div className="bg-zinc-900/90 border border-zinc-700 rounded-3xl p-8 max-w-md w-full shadow-2xl mt-4 text-center">
-          <div className="w-10 h-10 border-3 border-cyan-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <h2 className="text-xl font-bold mb-2">Waiting for opponent...</h2>
-          <p className="text-zinc-400 text-sm mb-5">Share this room code with your friend:</p>
+      {/* ═══════ HEADER INFO (In Game) ═══════ */}
+      {phase !== "lobby" && (
+        <div className="flex gap-4 mb-4 w-full" style={{ maxWidth: size.w || 900 }}>
+          {isCreator ? (
+            <div className="flex-1 rounded-2xl border p-4 bg-gray-900/80 border-cyan-600 ring-2 ring-cyan-500/50">
+               <p className="text-[10px] uppercase font-bold text-cyan-400 mb-1">Mine Layer (You)</p>
+               <p className="text-lg font-bold">{creatorName}</p>
+               <p className="text-sm text-zinc-400 mt-1">
+                 {phase === "placing" ? `Placed: ${placedMines.size} / ${maxMines}` : `Mines placed.`}
+               </p>
+            </div>
+          ) : (
+             <div className="flex-1 rounded-2xl border p-4 bg-gray-900/80 border-cyan-800 opacity-60">
+               <p className="text-[10px] uppercase font-bold text-cyan-600 mb-1">Mine Layer</p>
+               <p className="text-lg">{creatorName}</p>
+             </div>
+          )}
 
-          <div className="bg-zinc-800 border border-zinc-600 rounded-2xl px-6 py-4 mb-4">
-            <p className="text-3xl font-black tracking-[0.3em] text-cyan-400 font-mono">{roomCode}</p>
-          </div>
-
-          <button onClick={handleCopy}
-            className="px-6 py-2.5 rounded-xl bg-zinc-700 hover:bg-zinc-600 text-white font-semibold text-sm transition-colors cursor-pointer">
-            {copied ? "✅ Copied!" : "📋 Copy Invite Link"}
-          </button>
+          {!isCreator ? (
+            <div className="flex-1 rounded-2xl border p-4 bg-gray-900/80 border-amber-500 ring-2 ring-amber-500/50 flex flex-col justify-between">
+               <div>
+                 <p className="text-[10px] uppercase font-bold text-amber-400 mb-1">Flipper (You)</p>
+                 <div className="flex justify-between items-end">
+                   <p className="text-xl font-bold">{flipperName}</p>
+                   <div className="text-right">
+                     <p className="text-sm">Score: <span className="font-mono text-cyan-300 font-bold">{score}</span></p>
+                   </div>
+                 </div>
+               </div>
+               <div className="mt-2 text-sm text-amber-200 font-bold">
+                 💉 Antidotes: {antidotes} / 5
+               </div>
+            </div>
+          ) : (
+            <div className="flex-1 rounded-2xl border p-4 bg-gray-900/80 border-amber-800 opacity-80">
+               <p className="text-[10px] uppercase font-bold text-amber-600 mb-1">Flipper</p>
+               <p className="text-lg">{flipperName || "Waiting for player..."}</p>
+               <div className="mt-1 text-xs text-zinc-400 flex justify-between">
+                 <span>Score: {score}</span>
+                 <span>Antidotes: {antidotes}</span>
+               </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* ═══════ PLAYING / GAME OVER ═══════ */}
-      {(phase === "playing" || phase === "gameover") && (
-        <>
-          {/* Scoreboards */}
-          <div className="flex gap-4 mb-4 w-full" style={{ maxWidth: size.w || 900 }}>
-            {([1, 2] as const).map((slot) => {
-              const p = players.find((pl) => pl.slot === slot);
-              const active = currentTurn === slot && phase === "playing";
-              const isMe = mySlot === slot;
-              const cyan = slot === 1;
-              return (
-                <div key={slot} className={`flex-1 rounded-2xl border p-3 bg-gray-900/80 transition-all duration-300
-                  ${cyan ? "border-cyan-600" : "border-fuchsia-600"}
-                  ${active ? `ring-2 shadow-lg ${cyan ? "ring-cyan-500 shadow-cyan-500/30" : "ring-fuchsia-500 shadow-fuchsia-500/30"}` : "opacity-60"}`}>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className={`text-[10px] tracking-widest uppercase font-bold ${cyan ? "text-cyan-400" : "text-fuchsia-400"}`}>
-                        {p?.name || `Player ${slot}`} {isMe && <span className="text-zinc-500">(You)</span>}
-                      </p>
-                      <p className="text-3xl font-black mt-0.5">{scores[slot]}</p>
-                    </div>
-                    <div className={`w-9 h-9 rounded-full flex items-center justify-center font-black text-base ${cyan ? "bg-cyan-500" : "bg-fuchsia-500"}`}>{slot}</div>
-                  </div>
-                  {active && (
-                    <p className={`text-[10px] mt-1.5 font-semibold flex items-center gap-1 ${cyan ? "text-cyan-400" : "text-fuchsia-400"}`}>
-                      <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse inline-block" />
-                      {isMe ? "Your Turn" : "Their Turn"}
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Turn indicator */}
-          {phase === "playing" && (
-            <div className={`mb-3 text-sm font-bold px-4 py-1.5 rounded-full ${isMyTurn ? "bg-green-900/50 text-green-400 border border-green-600" : "bg-zinc-800 text-zinc-400 border border-zinc-600"}`}>
-              {isMyTurn ? "🟢 Your Turn — Click a water cell!" : "⏳ Waiting for opponent..."}
-            </div>
-          )}
-
-          {/* Progress */}
-          {phase === "playing" && (
-            <div className="w-full mb-3" style={{ maxWidth: size.w || 900 }}>
-              <div className="flex justify-between text-[10px] text-zinc-500 mb-1">
-                <span>Strait Opening Progress</span>
-                <span>{revealedSafe}/{safeTotal} cells ({progress}%)</span>
-              </div>
-              <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                <div className="h-full bg-gradient-to-r from-cyan-500 to-fuchsia-500 rounded-full transition-all duration-500" style={{ width: `${progress}%` }} />
-              </div>
-            </div>
-          )}
-
-          {/* Canvas */}
-          <div className="relative rounded-2xl overflow-hidden shadow-2xl shadow-blue-900/40 border border-zinc-700/60" style={{ width: size.w || "auto" }}>
-            {size.w > 0 && (
-              <canvas ref={canvasRef} width={size.w} height={size.h}
-                onClick={handleCanvasClick}
-                onMouseMove={handleMouseMove}
-                onMouseLeave={() => setHover(null)}
-                className="block" />
-            )}
-
-            {/* Game over overlay */}
-            {phase === "gameover" && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/55 backdrop-blur-sm">
-                <div className="bg-zinc-900/95 border border-zinc-600 rounded-3xl p-8 max-w-xs w-full text-center shadow-2xl">
-                  <div className="text-5xl mb-3">{winner === 0 ? "🤝" : winner === mySlot ? "🏆" : "😢"}</div>
-                  <h2 className="text-xl font-bold mb-3">
-                    {winner === 0 ? "It's a Tie!" : winner === mySlot ? "You Win!" : "You Lost!"}
-                  </h2>
-                  <div className="flex gap-3 justify-center mb-5">
-                    <div className="bg-cyan-900/40 border border-cyan-700 rounded-xl px-4 py-2">
-                      <p className="text-cyan-400 text-[10px] font-bold uppercase">{players.find((p) => p.slot === 1)?.name}</p>
-                      <p className="text-2xl font-black">{scores[1]}</p>
-                    </div>
-                    <div className="bg-fuchsia-900/40 border border-fuchsia-700 rounded-xl px-4 py-2">
-                      <p className="text-fuchsia-400 text-[10px] font-bold uppercase">{players.find((p) => p.slot === 2)?.name}</p>
-                      <p className="text-2xl font-black">{scores[2]}</p>
-                    </div>
-                  </div>
-                  <button onClick={() => { setPhase("lobby"); setRoomCode(""); setJoinCode(""); setWinner(null); }}
-                    className="px-8 py-3 rounded-full bg-gradient-to-r from-cyan-500 to-fuchsia-500 text-white font-bold shadow-lg hover:scale-105 active:scale-95 transition-transform cursor-pointer">
-                    Back to Lobby
-                  </button>
-                </div>
-              </div>
+      {/* ═══════ STATUS BARS & ROOM INFO ═══════ */}
+      {phase !== "lobby" && (
+        <div className="w-full flex items-center justify-between mb-2 text-sm max-w-[900px]">
+          <div className="flex gap-4 items-center">
+            <span className="font-mono bg-zinc-800 px-3 py-1 rounded text-cyan-300">Room: {roomCode}</span>
+            {phase === "waiting_flipper" && (
+               <button onClick={handleCopy} className="text-xs bg-zinc-700 hover:bg-zinc-600 px-2 py-1 rounded transition-colors">
+                  {copied ? "Copied" : "Copy Link"}
+               </button>
             )}
           </div>
-
-          {/* Legend */}
-          <div className="flex flex-wrap gap-5 mt-4 text-[11px] text-zinc-500 justify-center">
-            {[
-              { bg: "bg-cyan-600/60 border-cyan-500", label: "Player 1" },
-              { bg: "bg-fuchsia-600/60 border-fuchsia-500", label: "Player 2" },
-              { bg: "bg-red-900/60 border-red-500", label: "⚠ Danger (resets)" },
-              { bg: "bg-blue-600/20 border-blue-400/40", label: "Water (clickable)" },
-              { bg: "bg-black/30 border-black/20", label: "Land (locked)" },
-            ].map(({ bg, label }) => (
-              <span key={label} className="flex items-center gap-1.5">
-                <span className={`w-3.5 h-3.5 rounded border inline-block ${bg}`} />{label}
-              </span>
-            ))}
+          
+          <div className="font-bold">
+            {phase === "placing" && <span className="text-cyan-400">Place your mines.</span>}
+            {phase === "waiting_flipper" && <span className="text-zinc-400">Waiting for Flipper to join...</span>}
+            {phase === "flipping" && <span className="text-amber-400">Flipping phase. Find the safe paths!</span>}
+            {phase === "spectating" && <span className="text-cyan-400">Watching Flipper navigate your mines...</span>}
+            {phase === "gameover" && <span className={outcome === "won" ? "text-green-400" : "text-red-400"}>Game Over: {outcome?.toUpperCase()}</span>}
           </div>
-        </>
+        </div>
+      )}
+
+      {/* Progress */}
+      {(phase === "flipping" || phase === "spectating" || phase === "gameover") && (
+        <div className="w-full mb-3" style={{ maxWidth: size.w || 900 }}>
+          <div className="flex justify-between text-[10px] text-zinc-500 mb-1">
+            <span>Safe Cells Revealed</span>
+            <span>{safeRevealed}/{safeCells} ({progress}%)</span>
+          </div>
+          <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-cyan-500 to-amber-500 rounded-full transition-all duration-500" style={{ width: `${progress}%` }} />
+          </div>
+        </div>
+      )}
+
+      {/* ═══════ CANVAS ═══════ */}
+      {phase !== "lobby" && (
+        <div className="relative rounded-2xl overflow-hidden shadow-2xl shadow-blue-900/20 border border-zinc-700/60" style={{ width: size.w || "auto" }}>
+          <canvas ref={canvasRef} width={size.w} height={size.h}
+            onClick={handleCanvasClick} onMouseMove={handleMouseMove} onMouseLeave={() => setHover(null)}
+            className="block" />
+
+          {/* Place Mines Button Overlay */}
+          {phase === "placing" && placedMines.size > 0 && (
+             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10">
+                <button onClick={submitMines}
+                  className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 px-8 rounded-full shadow-lg shadow-cyan-900/50">
+                  Lock {placedMines.size} Mines & Ready
+                </button>
+             </div>
+          )}
+
+          {/* Game Over Overlay */}
+          {phase === "gameover" && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/55 backdrop-blur-sm z-20">
+              <div className="bg-zinc-900/95 border border-zinc-600 rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl">
+                <div className="text-5xl mb-3">{outcome === "won" ? "🏆" : "💥"}</div>
+                <h2 className={`text-2xl font-black mb-2 ${outcome === "won" ? "text-green-400" : "text-red-500"}`}>
+                  {outcome === "won" ? "FLIPPER SURVIVED!" : "FLIPPER DESTROYED"}
+                </h2>
+                <div className="text-zinc-300 mb-6 bg-black/30 p-4 rounded-xl">
+                   <p className="flex justify-between mb-1">
+                      <span>Final Score:</span> <span className="text-cyan-400 font-bold">{score}</span>
+                   </p>
+                   <p className="flex justify-between mb-1">
+                      <span>Mines Hit:</span> <span className="text-red-400 font-bold">{minesHit}</span>
+                   </p>
+                   <p className="flex justify-between">
+                      <span>Safe Found:</span> <span className="font-bold">{safeRevealed}/{safeCells}</span>
+                   </p>
+                </div>
+                <button onClick={() => { setPhase("lobby"); setRoomCode(""); setJoinCode(""); setPlacedMines(new Set()); }}
+                  className="px-8 py-3 rounded-full bg-zinc-700 hover:bg-zinc-600 text-white font-bold transition-colors">
+                  Back to Lobby
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
