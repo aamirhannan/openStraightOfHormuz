@@ -127,20 +127,35 @@ export default function HormuzMultiplayer() {
     });
 
     socket.on("flip_update", (data) => {
-      if (data.roomCode === roomCode || true) { // Room scoped, but just to be sure
-        setCells((prev) => {
-          const newCells = [...prev];
-          newCells[data.cellIndex] = { ...newCells[data.cellIndex], revealed: true, value: data.value, isMine: data.isMine };
-          return newCells;
-        });
-        setAntidotes(data.antidotes);
-        setScore(data.score);
-        setMinesHit(data.minesHit);
-        setSafeRevealed(data.safeRevealed);
-        if (data.outcome) {
-          setPhase("gameover");
-          setOutcome(data.outcome);
+      setCells((prev) => {
+        const newCells = [...prev];
+        newCells[data.cellIndex] = { ...newCells[data.cellIndex], revealed: true, value: data.value, isMine: data.isMine };
+        return newCells;
+      });
+      setAntidotes(data.antidotes);
+      setScore(data.score);
+      setMinesHit(data.minesHit);
+      setSafeRevealed(data.safeRevealed);
+      
+      if (isCreator) {
+        if (data.isMine) {
+          showFlash(`💥 Flipper hit your mine! (${data.antidotes} left)`);
+        } else {
+          showFlash(`🔍 Flipper found a safe spot! (+${data.value})`);
         }
+      }
+
+      if (data.outcome) {
+        setPhase("gameover");
+        setOutcome(data.outcome);
+      }
+    });
+
+    socket.on("flipper_joined", (data) => {
+      if (isCreator && phase === "waiting_flipper") {
+        setPhase("spectating");
+        setFlipperName(data.flipperName);
+        showFlash(`🎮 ${data.flipperName} has joined and is flipping!`);
       }
     });
 
@@ -154,6 +169,7 @@ export default function HormuzMultiplayer() {
       socket.off("mines_confirmed");
       socket.off("flip_update");
       socket.off("game_result");
+      socket.off("flipper_joined");
     };
   }, [roomCode, isCreator, phase]);
 
@@ -281,6 +297,7 @@ export default function HormuzMultiplayer() {
       rebuildCells(joinData.waterMask, joinData.revealedValues || []);
       setPhase("flipping");
       getSocket().emit("start_flipping");
+      getSocket().emit("flipper_joined", { roomCode: joinData.roomCode, flipperName: playerName.trim() });
     } catch (e: any) {
       setError(e.message);
     }
@@ -471,19 +488,22 @@ export default function HormuzMultiplayer() {
           ctx.fillText(String(cell.value), x + cw / 2, y + ch / 2);
         }
       } else if (phase === "flipping" || phase === "spectating") {
-        if (isCreator && cell.isMine) {
-          // Creator sees their unrevealed mines faintly
-          ctx.fillStyle = "rgba(220,38,38,0.3)";
+        const hasMine = isCreator && (cell.isMine || placedMines.has(i));
+
+        if (hasMine) {
+          // Creator sees their unrevealed mines solidly so they don't disappear
+          ctx.fillStyle = "rgba(220,38,38,0.85)";
           ctx.fillRect(x, y, cw, ch);
-          ctx.fillStyle = "rgba(255,255,255,0.4)";
-          ctx.font = `${Math.floor(Math.min(cw, ch) * 0.4)}px sans-serif`;
+          ctx.fillStyle = "#fff";
+          ctx.font = `bold ${Math.floor(Math.min(cw, ch) * 0.55)}px sans-serif`;
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
           ctx.fillText("💣", x + cw / 2, y + ch / 2);
+        } else {
+          ctx.fillStyle = hovered && phase === "flipping" ? "rgba(255,255,255,0.28)" : "rgba(30,100,200,0.13)";
+          ctx.fillRect(x, y, cw, ch);
         }
-
-        ctx.fillStyle = hovered && phase === "flipping" ? "rgba(255,255,255,0.28)" : "rgba(30,100,200,0.13)";
-        ctx.fillRect(x, y, cw, ch);
+        
         ctx.strokeStyle = hovered && phase === "flipping" ? "rgba(200,240,255,0.75)" : "rgba(100,200,255,0.32)";
         ctx.lineWidth = hovered && phase === "flipping" ? 1.2 : 0.7;
         ctx.strokeRect(x, y, cw, ch);
