@@ -7,6 +7,8 @@ app = 'openstraightofhormuz'
 primary_region = 'ams'
 
 [build]
+  [build.args]
+    NEXT_PUBLIC_SERVER_URL = "https://openstraightofhormuz-backend.fly.dev"
 
 [http_service]
   internal_port = 3000
