@@ -5,7 +5,7 @@ import { getSocket } from "../lib/socket";
 import { getUserId } from "../lib/userId";
 
 /* ── constants ── */
-const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || "http://localhost:4000";
+const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || "https://openstraightofhormuz-backend.fly.dev";
 const API_URL = `${SERVER_URL}/api`;
 
 const COLS = 20;
@@ -68,7 +68,7 @@ export default function HormuzMultiplayer() {
   const [roomCode, setRoomCode] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [isCreator, setIsCreator] = useState(false);
-  
+
   // Game stats
   const [maxMines, setMaxMines] = useState(0);
   const [placedMines, setPlacedMines] = useState<Set<number>>(new Set());
@@ -97,7 +97,7 @@ export default function HormuzMultiplayer() {
   /* ── init ── */
   useEffect(() => {
     setUserId(getUserId());
-    
+
     // Auto-fill from URL
     if (typeof window !== "undefined") {
       const searchParams = new URLSearchParams(window.location.search);
@@ -147,7 +147,7 @@ export default function HormuzMultiplayer() {
       setScore(data.score);
       setMinesHit(data.minesHit);
       setSafeRevealed(data.safeRevealed);
-      
+
       if (isCreator) {
         if (data.isMine) {
           showFlash(`💥 Flipper hit your mine! (${data.antidotes} left)`);
@@ -218,7 +218,7 @@ export default function HormuzMultiplayer() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      
+
       setRoomCode(data.roomCode);
       setMaxMines(data.maxMines);
       setIsCreator(true);
@@ -242,7 +242,7 @@ export default function HormuzMultiplayer() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      
+
       setRoomCode(data.roomCode);
       setIsCreator(false);
       setCreatorName(data.creatorName);
@@ -272,7 +272,7 @@ export default function HormuzMultiplayer() {
       // 1. Try to get state
       let res = await fetch(`${API_URL}/rooms/${code}?userId=${userId}`);
       let data = await res.json();
-      
+
       if (res.ok) {
         if (data.isCreator) {
           // Resume creator
@@ -285,7 +285,7 @@ export default function HormuzMultiplayer() {
           setScore(data.score);
           setMinesHit(data.minesHit);
           setSafeCells(data.safeCells || 0);
-          
+
           rebuildCells(data.waterMask, data.revealedValues || [], data.minePositions);
           if (data.status === "placing_mines") setPhase("placing");
           else if (data.status === "ready") setPhase("waiting_flipper");
@@ -305,14 +305,14 @@ export default function HormuzMultiplayer() {
           setScore(data.score);
           setMinesHit(data.minesHit);
           setSafeCells(data.safeCells || 0);
-          
+
           rebuildCells(data.waterMask, data.revealedValues || []);
           if (data.status === "flipping") {
-             setPhase("flipping");
-             getSocket().emit("start_flipping");
+            setPhase("flipping");
+            getSocket().emit("start_flipping");
           } else {
-             setPhase("gameover");
-             setOutcome(data.status);
+            setPhase("gameover");
+            setOutcome(data.status);
           }
           return;
         }
@@ -326,7 +326,7 @@ export default function HormuzMultiplayer() {
       });
       const joinData = await joinRes.json();
       if (!joinRes.ok) throw new Error(joinData.error || "Failed to join");
-      
+
       setRoomCode(joinData.roomCode);
       setIsCreator(false);
       setCreatorName(joinData.creatorName);
@@ -406,7 +406,7 @@ export default function HormuzMultiplayer() {
               }
             }
           }
-          
+
           if (adjacent.some(a => next.has(a))) {
             showFlash("Mines cannot be placed directly adjacent to each other!");
             return prev;
@@ -441,7 +441,7 @@ export default function HormuzMultiplayer() {
         setScore(data.score);
         setMinesHit(data.minesHit);
         setSafeRevealed(data.safeRevealed);
-        
+
         getSocket().emit("cell_flipped", { roomCode, cellIndex: idx, result: data });
 
         if (data.isMine) {
@@ -464,7 +464,7 @@ export default function HormuzMultiplayer() {
     const canvas = canvasRef.current;
     if (idx === null) { setHover(null); if (canvas) canvas.style.cursor = "default"; return; }
     const cell = cells[idx];
-    
+
     let clickable = false;
     if (phase === "placing" && cell.kind === "water") clickable = true;
     else if (phase === "flipping" && cell && cell.kind === "water" && !cell.revealed) clickable = true;
@@ -564,7 +564,7 @@ export default function HormuzMultiplayer() {
           ctx.fillStyle = hovered && phase === "flipping" ? "rgba(255,255,255,0.28)" : "rgba(30,100,200,0.13)";
           ctx.fillRect(x, y, cw, ch);
         }
-        
+
         ctx.strokeStyle = hovered && phase === "flipping" ? "rgba(200,240,255,0.75)" : "rgba(100,200,255,0.32)";
         ctx.lineWidth = hovered && phase === "flipping" ? 1.2 : 0.7;
         ctx.strokeRect(x, y, cw, ch);
@@ -656,42 +656,42 @@ export default function HormuzMultiplayer() {
         <div className="flex gap-4 mb-4 w-full" style={{ maxWidth: size.w || 900 }}>
           {isCreator ? (
             <div className="flex-1 rounded-2xl border p-4 bg-gray-900/80 border-cyan-600 ring-2 ring-cyan-500/50">
-               <p className="text-[10px] uppercase font-bold text-cyan-400 mb-1">Mine Layer (You)</p>
-               <p className="text-lg font-bold">{creatorName}</p>
-               <p className="text-sm text-zinc-400 mt-1">
-                 {phase === "placing" ? `Placed: ${placedMines.size} / ${maxMines}` : `Mines placed.`}
-               </p>
+              <p className="text-[10px] uppercase font-bold text-cyan-400 mb-1">Mine Layer (You)</p>
+              <p className="text-lg font-bold">{creatorName}</p>
+              <p className="text-sm text-zinc-400 mt-1">
+                {phase === "placing" ? `Placed: ${placedMines.size} / ${maxMines}` : `Mines placed.`}
+              </p>
             </div>
           ) : (
-             <div className="flex-1 rounded-2xl border p-4 bg-gray-900/80 border-cyan-800 opacity-60">
-               <p className="text-[10px] uppercase font-bold text-cyan-600 mb-1">Mine Layer</p>
-               <p className="text-lg">{creatorName}</p>
-             </div>
+            <div className="flex-1 rounded-2xl border p-4 bg-gray-900/80 border-cyan-800 opacity-60">
+              <p className="text-[10px] uppercase font-bold text-cyan-600 mb-1">Mine Layer</p>
+              <p className="text-lg">{creatorName}</p>
+            </div>
           )}
 
           {!isCreator ? (
             <div className="flex-1 rounded-2xl border p-4 bg-gray-900/80 border-amber-500 ring-2 ring-amber-500/50 flex flex-col justify-between">
-               <div>
-                 <p className="text-[10px] uppercase font-bold text-amber-400 mb-1">Flipper (You)</p>
-                 <div className="flex justify-between items-end">
-                   <p className="text-xl font-bold">{flipperName}</p>
-                   <div className="text-right">
-                     <p className="text-sm">Score: <span className="font-mono text-cyan-300 font-bold">{score}</span></p>
-                   </div>
-                 </div>
-               </div>
-               <div className="mt-2 text-sm text-amber-200 font-bold">
-                 💉 Antidotes: {antidotes} / 5
-               </div>
+              <div>
+                <p className="text-[10px] uppercase font-bold text-amber-400 mb-1">Flipper (You)</p>
+                <div className="flex justify-between items-end">
+                  <p className="text-xl font-bold">{flipperName}</p>
+                  <div className="text-right">
+                    <p className="text-sm">Score: <span className="font-mono text-cyan-300 font-bold">{score}</span></p>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-2 text-sm text-amber-200 font-bold">
+                💉 Antidotes: {antidotes} / 5
+              </div>
             </div>
           ) : (
             <div className="flex-1 rounded-2xl border p-4 bg-gray-900/80 border-amber-800 opacity-80">
-               <p className="text-[10px] uppercase font-bold text-amber-600 mb-1">Flipper</p>
-               <p className="text-lg">{flipperName || "Waiting for player..."}</p>
-               <div className="mt-1 text-xs text-zinc-400 flex justify-between">
-                 <span>Score: {score}</span>
-                 <span>Antidotes: {antidotes}</span>
-               </div>
+              <p className="text-[10px] uppercase font-bold text-amber-600 mb-1">Flipper</p>
+              <p className="text-lg">{flipperName || "Waiting for player..."}</p>
+              <div className="mt-1 text-xs text-zinc-400 flex justify-between">
+                <span>Score: {score}</span>
+                <span>Antidotes: {antidotes}</span>
+              </div>
             </div>
           )}
         </div>
@@ -703,12 +703,12 @@ export default function HormuzMultiplayer() {
           <div className="flex gap-4 items-center">
             <span className="font-mono bg-zinc-800 px-3 py-1 rounded text-cyan-300">Room: {roomCode}</span>
             {phase === "waiting_flipper" && (
-               <button onClick={handleCopy} className="text-xs bg-zinc-700 hover:bg-zinc-600 px-2 py-1 rounded transition-colors">
-                  {copied ? "Copied" : "Copy Link"}
-               </button>
+              <button onClick={handleCopy} className="text-xs bg-zinc-700 hover:bg-zinc-600 px-2 py-1 rounded transition-colors">
+                {copied ? "Copied" : "Copy Link"}
+              </button>
             )}
           </div>
-          
+
           <div className="font-bold">
             {phase === "placing" && <span className="text-cyan-400">Place your mines.</span>}
             {phase === "waiting_flipper" && <span className="text-zinc-400">Waiting for Flipper to join...</span>}
@@ -724,7 +724,7 @@ export default function HormuzMultiplayer() {
         <div className="w-full mb-3 px-1" style={{ maxWidth: size.w || 900 }}>
           <div className="flex justify-between items-center text-[11px] text-zinc-400">
             <span className="bg-zinc-800/80 border border-zinc-700 px-3 py-1 rounded-full uppercase tracking-widest font-bold text-[9px]">
-               Mission: Link West cells to most East cell
+              Mission: Link West cells to most East cell
             </span>
             <span>Safe Areas Cleared: <span className="text-white font-bold">{safeRevealed}</span></span>
           </div>
@@ -740,12 +740,12 @@ export default function HormuzMultiplayer() {
 
           {/* Place Mines Button Overlay */}
           {phase === "placing" && placedMines.size > 0 && (
-             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10">
-                <button onClick={submitMines}
-                  className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 px-8 rounded-full shadow-lg shadow-cyan-900/50">
-                  Lock {placedMines.size} Mines & Ready
-                </button>
-             </div>
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10">
+              <button onClick={submitMines}
+                className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 px-8 rounded-full shadow-lg shadow-cyan-900/50">
+                Lock {placedMines.size} Mines & Ready
+              </button>
+            </div>
           )}
 
           {/* Game Over Overlay */}
@@ -757,15 +757,15 @@ export default function HormuzMultiplayer() {
                   {outcome === "won" ? "FLIPPER SURVIVED!" : "FLIPPER DESTROYED"}
                 </h2>
                 <div className="text-zinc-300 mb-6 bg-black/30 p-4 rounded-xl">
-                   <p className="flex justify-between mb-1">
-                      <span>Final Score:</span> <span className="text-cyan-400 font-bold">{score}</span>
-                   </p>
-                   <p className="flex justify-between mb-1">
-                      <span>Mines Hit:</span> <span className="text-red-400 font-bold">{minesHit}</span>
-                   </p>
-                   <p className="flex justify-between">
-                      <span>Safe Found:</span> <span className="font-bold">{safeRevealed}/{safeCells}</span>
-                   </p>
+                  <p className="flex justify-between mb-1">
+                    <span>Final Score:</span> <span className="text-cyan-400 font-bold">{score}</span>
+                  </p>
+                  <p className="flex justify-between mb-1">
+                    <span>Mines Hit:</span> <span className="text-red-400 font-bold">{minesHit}</span>
+                  </p>
+                  <p className="flex justify-between">
+                    <span>Safe Found:</span> <span className="font-bold">{safeRevealed}/{safeCells}</span>
+                  </p>
                 </div>
                 <button onClick={() => { setPhase("lobby"); setRoomCode(""); setJoinCode(""); setPlacedMines(new Set()); }}
                   className="px-8 py-3 rounded-full bg-zinc-700 hover:bg-zinc-600 text-white font-bold transition-colors">
